@@ -1,0 +1,61 @@
+name: Release USB Drive Detector
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for release'
+        required: true
+
+jobs:
+  create-release-branch:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: [ '8' ]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 100
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'adopt'
+          java-version: ${{ matrix.java }}
+          cache: 'maven'
+          # Properties for deployment to OSSRH:
+          server-id: ossrh
+          server-username: OSSRH_USERNAME
+          server-password: OSSRH_PASSWORD
+          # Properties for gpg signing:
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Setup Github User And Release Branch
+        run: |
+          git config --local user.email "release-bot@users.noreply.github.com"
+          git config --local user.name "release-bot"
+
+      - name: Change Log
+        run: |
+          bash ${GITHUB_WORKSPACE}/.github/bashScripts/changelog.sh
+          git add ${GITHUB_WORKSPACE}/CHANGELOG.md
+          git commit -m "Updating change log on release branch"
+          git push
+
+      - name: Prepare Release
+        run: |
+          mvn --batch-mode build-helper:parse-version release:prepare \
+          -DdevelopementVersion='${parsedVersion.majorVersion}.${parsedVersion.nextMinorVersion}.0-SNAPSHOT' \
+          -Darguments="-DskipTests -Dusername=${{ github.actor }} -Dpassword=${{ github.token }}"
+
+      - name: Publish
+        run: |
+          mvn --batch-mode --no-transfer-progress \
+          release:perform -Dusername=${{ github.actor }} -Dpassword=${{ github.token }} -Darguments="-DskipTests"
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
